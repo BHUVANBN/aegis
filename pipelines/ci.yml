@@ -1,0 +1,44 @@
+# AEGIS application CI (lint, types, tests, dependency audit, Bicep validation). Runs on every branch and pull request.
+# Syntax-checked only; NOT run in a real Azure DevOps organisation by the author.
+trigger:
+  branches: { include: ['*'] }
+pr:
+  branches: { include: [main] }
+
+pool:
+  name: Default
+
+stages:
+  - stage: Validate
+    displayName: Validate source and run tests
+    jobs:
+      - job: quality
+        steps:
+          - checkout: self
+            fetchDepth: 1
+          - task: NodeTool@0
+            inputs: { versionSpec: '22.x' }
+          - script: npm ci
+            displayName: Install dependencies (lockfile enforced)
+          - script: npm run lint
+            displayName: Lint
+          - script: npm run format:check
+            displayName: Format check
+          - script: npm run typecheck
+            displayName: Type check
+          - script: npm run test:unit
+            displayName: Unit tests
+          - script: |
+              docker run -d --name pg -e POSTGRES_USER=aegis -e POSTGRES_PASSWORD=aegis_dev_pw -e POSTGRES_DB=aegis_test -p 5432:5432 postgres:16-alpine
+              for i in $(seq 1 30); do docker exec pg pg_isready -U aegis -d aegis_test && break; sleep 1; done
+              TEST_DATABASE_URL=postgres://aegis:aegis_dev_pw@localhost:5432/aegis_test npm run test:integration
+              TEST_DATABASE_URL=postgres://aegis:aegis_dev_pw@localhost:5432/aegis_test npm run test:e2e
+            displayName: Integration + e2e tests (PostgreSQL container)
+          - script: npm audit --omit=dev --audit-level=high
+            displayName: Dependency vulnerability scan
+          - script: |
+              az bicep install
+              bash scripts/validate-bicep.sh
+            displayName: Bicep build + lint (warnings fail the build)
+          - script: bash -n scripts/*.sh pipeline-templates/scripts/*.sh
+            displayName: Shell syntax check

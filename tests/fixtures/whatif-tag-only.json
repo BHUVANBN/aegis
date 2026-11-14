@@ -1,0 +1,11 @@
+{
+  "changes": [
+    {
+      "resourceId": "/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/rg-demo-dev/providers/Microsoft.Storage/storageAccounts/stdemodev001",
+      "changeType": "Modify",
+      "delta": [{ "path": "tags.costCenter", "propertyChangeType": "Create", "after": "cc-1042" }]
+    }
+  ],
+  "diagnostics": [],
+  "status": "Succeeded"
+}

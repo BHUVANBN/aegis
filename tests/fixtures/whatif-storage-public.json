@@ -1,0 +1,20 @@
+{
+  "changes": [
+    {
+      "resourceId": "/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/rg-demo-dev/providers/Microsoft.Storage/storageAccounts/stpublic001",
+      "changeType": "Create",
+      "after": {
+        "name": "stpublic001",
+        "type": "Microsoft.Storage/storageAccounts",
+        "sku": { "name": "Standard_LRS" },
+        "properties": {
+          "allowBlobPublicAccess": true,
+          "supportsHttpsTrafficOnly": false,
+          "minimumTlsVersion": "TLS1_0"
+        }
+      }
+    }
+  ],
+  "diagnostics": [],
+  "status": "Succeeded"
+}

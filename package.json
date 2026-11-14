@@ -1,0 +1,42 @@
+{
+  "name": "aegis",
+  "version": "1.0.0",
+  "private": true,
+  "description": "AEGIS - Agentic Infrastructure Change Risk Detection",
+  "engines": {
+    "node": ">=20"
+  },
+  "workspaces": [
+    "packages/*",
+    "apps/*"
+  ],
+  "scripts": {
+    "typecheck": "npm run typecheck -w packages/shared && npm run typecheck -w apps/api && npm run typecheck -w apps/web",
+    "lint": "eslint .",
+    "format:check": "prettier --check \"**/*.{ts,tsx,json,md,yml,yaml}\" --ignore-path .gitignore",
+    "test": "npm run test:unit && npm run test:integration && npm run test:e2e",
+    "test:unit": "vitest run --config vitest.config.ts tests/unit",
+    "test:integration": "vitest run --config vitest.config.ts --no-file-parallelism tests/integration",
+    "test:e2e": "vitest run --config vitest.config.ts --no-file-parallelism tests/e2e",
+    "test:coverage": "vitest run --config vitest.config.ts --no-file-parallelism --coverage",
+    "build:web": "npm run build -w apps/web",
+    "migrate": "npm run migrate -w apps/api",
+    "seed": "npm run seed -w apps/api",
+    "dev:api": "npm run dev -w apps/api",
+    "dev:web": "npm run dev -w apps/web"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.39.5",
+    "@types/node": "^26.6.5",
+    "@types/supertest": "^7.2.1",
+    "@vitest/coverage-v8": "^5.0.5",
+    "eslint": "^9.39.5",
+    "prettier": "^3.9.10",
+    "supertest": "^7.3.1",
+    "tsx": "^4.23.15",
+    "typescript": "5.9",
+    "typescript-eslint": "^8.72.1",
+    "vitest": "^5.0.5"
+  },
+  "type": "module"
+}

@@ -1,0 +1,35 @@
+# Thin pipeline that lives in the WORKLOAD repository. All governance logic comes from the protected template repository.
+# Replace aegis with your Azure DevOps project. Create the repository "aegis-pipeline-templates" and push the contents of
+# this repo's pipeline-templates/ folder to its root (governed-pipeline.yml + scripts/). Then add the "Required template" check
+# (governed-pipeline.yml@aegisTemplates) on the Azure DevOps environments aegis-dev and aegis-prod.
+trigger:
+  branches: { include: [main] }
+  paths: { include: [infra/*] }
+pr: none
+
+pool:
+  name: Default
+
+parameters:
+  - name: targetEnvironment
+    displayName: Target environment
+    type: string
+    default: dev
+    values: [dev, prod]
+
+resources:
+  repositories:
+    - repository: aegisTemplates
+      type: git
+      name: aegis/aegis-pipeline-templates
+      ref: refs/heads/main
+
+extends:
+  template: governed-pipeline.yml@aegisTemplates
+  parameters:
+    targetEnvironment: ${{ parameters.targetEnvironment }}
+    projectKey: demo
+    templateSource: infra/sample-workload/main.bicep
+    resourceGroup: rg-demo-${{ parameters.targetEnvironment }}
+    deployParameters: environmentName=${{ parameters.targetEnvironment }}
+    serviceConnection: aegis-${{ parameters.targetEnvironment }}-sc

@@ -1,0 +1,6 @@
+# add these lines to the repo's .gitignore
+deploy/.state/
+deploy/config.env
+aegis-installer.sh
+*.zip
+.env

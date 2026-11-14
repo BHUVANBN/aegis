@@ -1,0 +1,15 @@
+{
+  "changes": [
+    {
+      "resourceId": "/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/rg-demo-prod/providers/Microsoft.DBforPostgreSQL/flexibleServers/pg-demo-prod",
+      "changeType": "Delete",
+      "before": {
+        "name": "pg-demo-prod",
+        "type": "Microsoft.DBforPostgreSQL/flexibleServers",
+        "sku": { "name": "Standard_B1ms" }
+      }
+    }
+  ],
+  "diagnostics": [],
+  "status": "Succeeded"
+}

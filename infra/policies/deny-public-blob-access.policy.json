@@ -1,0 +1,20 @@
+{
+  "properties": {
+    "displayName": "AEGIS - Deny storage accounts that allow anonymous blob access",
+    "description": "Complements AEGIS rule LR-STG-001: ARM refuses the deployment even if the pipeline gate is bypassed.",
+    "mode": "Indexed",
+    "metadata": { "category": "Storage", "version": "1.0.0" },
+    "parameters": {
+      "effect": { "type": "String", "allowedValues": ["Audit", "Deny", "Disabled"], "defaultValue": "Audit" }
+    },
+    "policyRule": {
+      "if": {
+        "allOf": [
+          { "field": "type", "equals": "Microsoft.Storage/storageAccounts" },
+          { "field": "Microsoft.Storage/storageAccounts/allowBlobPublicAccess", "equals": true }
+        ]
+      },
+      "then": { "effect": "[parameters('effect')]" }
+    }
+  }
+}

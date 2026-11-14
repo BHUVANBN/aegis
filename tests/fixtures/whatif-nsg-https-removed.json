@@ -1,0 +1,49 @@
+{
+  "changes": [
+    {
+      "resourceId": "/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/rg-demo-prod/providers/Microsoft.Network/networkSecurityGroups/nsg-web",
+      "changeType": "Modify",
+      "before": {
+        "name": "nsg-web",
+        "type": "Microsoft.Network/networkSecurityGroups",
+        "location": "centralindia"
+      },
+      "after": {
+        "name": "nsg-web",
+        "type": "Microsoft.Network/networkSecurityGroups",
+        "location": "centralindia"
+      },
+      "delta": [
+        {
+          "path": "properties.securityRules",
+          "propertyChangeType": "Modify",
+          "children": [
+            {
+              "path": "[1]",
+              "propertyChangeType": "Delete",
+              "before": {
+                "name": "allow-https-inbound",
+                "properties": {
+                  "access": "Allow",
+                  "direction": "Inbound",
+                  "priority": 110,
+                  "protocol": "Tcp",
+                  "sourceAddressPrefix": "*",
+                  "sourcePortRange": "*",
+                  "destinationAddressPrefix": "*",
+                  "destinationPortRange": "443"
+                }
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "resourceId": "/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/rg-demo-prod/providers/Microsoft.Storage/storageAccounts/stdemoprod001",
+      "changeType": "NoChange"
+    }
+  ],
+  "diagnostics": [],
+  "status": "Succeeded"
+}

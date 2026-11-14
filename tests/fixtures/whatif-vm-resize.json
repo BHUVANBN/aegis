@@ -1,0 +1,18 @@
+{
+  "changes": [
+    {
+      "resourceId": "/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/rg-demo-prod/providers/Microsoft.Compute/virtualMachines/vm-app-01",
+      "changeType": "Modify",
+      "delta": [
+        {
+          "path": "properties.hardwareProfile.vmSize",
+          "propertyChangeType": "Modify",
+          "before": "Standard_B2s",
+          "after": "Standard_B4ms"
+        }
+      ]
+    }
+  ],
+  "diagnostics": [],
+  "status": "Succeeded"
+}

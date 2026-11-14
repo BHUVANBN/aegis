@@ -1,0 +1,16 @@
+# NEGATIVE TEST: this pipeline does NOT extend the governed template. The aegis-prod environment's
+# "Required template" check must refuse it. If the echo below ever runs, the gate can be bypassed.
+trigger: none
+pr: none
+pool:
+  name: Default
+stages:
+  - stage: Bypass
+    jobs:
+      - deployment: tryprod
+        environment: aegis-prod
+        strategy:
+          runOnce:
+            deploy:
+              steps:
+                - script: echo "BYPASS SUCCEEDED - the governance gate did not stop this pipeline"

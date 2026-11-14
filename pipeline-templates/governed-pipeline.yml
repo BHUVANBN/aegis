@@ -1,0 +1,246 @@
+# AEGIS governed deployment template. PUBLISH THIS FILE (and the scripts/ folder next to it) in a SEPARATE, protected repository,
+# e.g. "aegis-pipeline-templates", and make workload pipelines `extends:` it. Then add the Azure DevOps check "Required template"
+# on the environments so a pipeline that does not extend this template cannot use the deployment service connection.
+# Syntax-checked only; NOT run in a real Azure DevOps organisation by the author.
+# Every job checks out BOTH repositories so Azure DevOps places them in sub-folders of $(Pipeline.Workspace)/s (multi-checkout layout);
+# if your agent places them elsewhere, check with `ls $(Pipeline.Workspace)/s` and adjust the TPL/SRC variables below.
+parameters:
+  - name: targetEnvironment
+    type: string
+    values: [dev, prod]
+  - name: projectKey
+    type: string
+  - name: templateSource # Bicep entry point, relative to the workload repository root
+    type: string
+  - name: resourceGroup
+    type: string
+  - name: deployParameters # extra `az deployment group` parameters, e.g. "environmentName=dev"
+    type: string
+    default: ''
+  - name: serviceConnection # Azure DevOps service connection name (workload identity federation)
+    type: string
+
+variables:
+  - group: aegis-pipeline # AEGIS_API_URL, AEGIS_API_AUDIENCE (identifiers, not secrets)
+  - name: TPL # where the protected template repository is checked out
+    value: $(Pipeline.Workspace)/s/aegis-pipeline-templates
+  - name: SRC # where the workload repository is checked out
+    value: $(Pipeline.Workspace)/s/$(Build.Repository.Name)
+
+stages:
+  - stage: Build
+    displayName: Bicep build, lint and security checks
+    jobs:
+      - job: bicep
+        steps:
+          - checkout: self
+          - checkout: aegisTemplates
+          - script: |
+              set -euo pipefail
+              OUT=$(Build.ArtifactStagingDirectory)/arm-template
+              mkdir -p "$OUT"
+              az bicep install
+              az bicep lint --file "$(SRC)/${{ parameters.templateSource }}"
+              az bicep build --file "$(SRC)/${{ parameters.templateSource }}" --outfile "$OUT/main.json"
+              sha256sum "$OUT/main.json" | tee "$OUT/main.json.sha256"
+            displayName: Bicep lint + build (the compiled ARM template is the deployable artifact)
+          - script: |
+              python3 -m pip install --quiet checkov
+              checkov -f $(Build.ArtifactStagingDirectory)/arm-template/main.json --framework arm --soft-fail
+            displayName: Infrastructure security scan (advisory until baseline is tuned)
+          - task: PublishPipelineArtifact@1
+            inputs: { targetPath: '$(Build.ArtifactStagingDirectory)/arm-template', artifact: arm-template }
+
+  - stage: Assess
+    displayName: ARM What-If and AEGIS assessment
+    dependsOn: Build
+    condition: succeeded()
+    jobs:
+      - job: assess
+        steps:
+          - checkout: self
+          - checkout: aegisTemplates
+          - download: current
+            artifact: arm-template
+          - task: AzureCLI@2
+            displayName: az deployment group what-if (read-only)
+            inputs:
+              azureSubscription: ${{ parameters.serviceConnection }}
+              scriptType: bash
+              scriptLocation: inlineScript
+              inlineScript: |
+                set -euo pipefail
+                mkdir -p $(Build.ArtifactStagingDirectory)/evidence
+                az deployment group what-if --resource-group ${{ parameters.resourceGroup }} \
+                  --template-file $(Pipeline.Workspace)/arm-template/main.json --parameters ${{ parameters.deployParameters }} \
+                  --no-pretty-print --result-format FullResourcePayloads \
+                  > $(Build.ArtifactStagingDirectory)/evidence/whatif.json
+          - task: AzureCLI@2
+            name: aegis
+            displayName: Submit to AEGIS and wait for assessment
+            inputs:
+              azureSubscription: ${{ parameters.serviceConnection }}
+              scriptType: bash
+              scriptLocation: inlineScript
+              inlineScript: |
+                export ENVIRONMENT=${{ parameters.targetEnvironment }} PROJECT_KEY=${{ parameters.projectKey }} COMMIT_SHA=$(Build.SourceVersion) RUN_ID=$(Build.BuildId)
+                bash "$(TPL)/scripts/assess.sh" $(Pipeline.Workspace)/arm-template/main.json \
+                  $(Build.ArtifactStagingDirectory)/evidence/whatif.json "${{ parameters.templateSource }}" $(Build.ArtifactStagingDirectory)/evidence
+            env:
+              AEGIS_API_URL: $(AEGIS_API_URL)
+              AEGIS_API_AUDIENCE: $(AEGIS_API_AUDIENCE)
+          - task: PublishPipelineArtifact@1
+            condition: always()
+            inputs:
+              {
+                targetPath: '$(Build.ArtifactStagingDirectory)/evidence',
+                artifact: 'aegis-evidence-$(System.StageAttempt)',
+              }
+
+  - stage: Gate
+    displayName: Policy gate
+    dependsOn: Assess
+    condition: succeeded()
+    variables:
+      GATE_DECISION: $[ stageDependencies.Assess.assess.outputs['aegis.GATE_DECISION'] ]
+    jobs:
+      - job: decide
+        steps:
+          - script: |
+              echo "AEGIS gate decision: $(GATE_DECISION)"
+              if [ "$(GATE_DECISION)" = "block" ]; then
+                echo "##vso[task.logissue type=error]AEGIS blocked this change. Review the assessment, modify the change and resubmit."
+                exit 1
+              fi
+              if [ "$(GATE_DECISION)" = "require_approval" ]; then
+                echo "##vso[task.logissue type=warning]Approval required. Obtain approval in the AEGIS dashboard; the Deploy stage re-checks it server-side."
+              fi
+            displayName: Evaluate gate decision
+
+  - stage: Deploy
+    displayName: Deploy authorized artifact
+    dependsOn: [Assess, Gate]
+    condition: succeeded()
+    variables:
+      ASSESSMENT_ID: $[ stageDependencies.Assess.assess.outputs['aegis.ASSESSMENT_ID'] ]
+    jobs:
+      # 'environment' enables Azure DevOps approvals/checks (Required template, Branch control, Approvals), separate from AEGIS approvals
+      - deployment: deploy
+        environment: aegis-${{ parameters.targetEnvironment }}
+        strategy:
+          runOnce:
+            deploy:
+              steps:
+                - checkout: self
+                - checkout: aegisTemplates
+                - task: AzureCLI@2
+                  name: authorize
+                  displayName: AEGIS deployment authorization (server-side; digest recomputed from the file about to be deployed)
+                  inputs:
+                    azureSubscription: ${{ parameters.serviceConnection }}
+                    scriptType: bash
+                    scriptLocation: inlineScript
+                    inlineScript: |
+                      export ENVIRONMENT=${{ parameters.targetEnvironment }} RUN_ID=deploy-$(Build.BuildId)
+                      bash "$(TPL)/scripts/authorize.sh" $(Pipeline.Workspace)/arm-template/main.json
+                  env:
+                    AEGIS_API_URL: $(AEGIS_API_URL)
+                    AEGIS_API_AUDIENCE: $(AEGIS_API_AUDIENCE)
+                    ASSESSMENT_ID: $(ASSESSMENT_ID)
+                - task: AzureCLI@2
+                  name: arm
+                  displayName: az deployment group create (the authorized artifact)
+                  inputs:
+                    azureSubscription: ${{ parameters.serviceConnection }}
+                    scriptType: bash
+                    scriptLocation: inlineScript
+                    inlineScript: |
+                      set -uo pipefail
+                      NAME=aegis-$(Build.BuildId)
+                      if az deployment group create --resource-group ${{ parameters.resourceGroup }} --name "$NAME" \
+                           --template-file $(Pipeline.Workspace)/arm-template/main.json --parameters ${{ parameters.deployParameters }}; then
+                        bash "$(TPL)/scripts/report-result.sh" succeeded "$(authorize.DEPLOYMENT_ID)" "$NAME"
+                      else
+                        bash "$(TPL)/scripts/report-result.sh" failed "$(authorize.DEPLOYMENT_ID)" "$NAME"
+                        exit 1
+                      fi
+                  env:
+                    AEGIS_API_URL: $(AEGIS_API_URL)
+                    AEGIS_API_AUDIENCE: $(AEGIS_API_AUDIENCE)
+
+  - stage: Verify
+    displayName: Post-deployment verification
+    dependsOn: [Deploy]
+    condition: succeeded()
+    variables:
+      DEPLOYMENT_ID: $[ stageDependencies.Deploy.deploy.outputs['deploy.authorize.DEPLOYMENT_ID'] ]
+    jobs:
+      - job: verify
+        steps:
+          - checkout: self
+          - checkout: aegisTemplates
+          - task: AzureCLI@2
+            displayName: AEGIS verification (observed Azure state vs approved change)
+            inputs:
+              azureSubscription: ${{ parameters.serviceConnection }}
+              scriptType: bash
+              scriptLocation: inlineScript
+              inlineScript: bash "$(TPL)/scripts/verify.sh" "$(DEPLOYMENT_ID)" $(Build.ArtifactStagingDirectory)/verification
+            env:
+              AEGIS_API_URL: $(AEGIS_API_URL)
+              AEGIS_API_AUDIENCE: $(AEGIS_API_AUDIENCE)
+          - task: PublishPipelineArtifact@1
+            condition: always()
+            inputs:
+              {
+                targetPath: '$(Build.ArtifactStagingDirectory)/verification',
+                artifact: 'aegis-verification-$(System.StageAttempt)',
+              }
+
+  # Detective control: compares Azure's recorded changes with authorized deployment windows. Runs even if earlier stages were skipped.
+  - stage: Reconcile
+    displayName: Out-of-band change reconciliation
+    dependsOn: [Verify]
+    condition: always()
+    jobs:
+      - job: reconcile
+        steps:
+          - checkout: self
+          - checkout: aegisTemplates
+          - task: AzureCLI@2
+            displayName: AEGIS reconciliation (warns on changes outside authorized windows)
+            inputs:
+              azureSubscription: ${{ parameters.serviceConnection }}
+              scriptType: bash
+              scriptLocation: inlineScript
+              inlineScript: |
+                export ENVIRONMENT=${{ parameters.targetEnvironment }}
+                bash "$(TPL)/scripts/reconcile.sh" $(Build.ArtifactStagingDirectory)/reconciliation
+            env:
+              AEGIS_API_URL: $(AEGIS_API_URL)
+              AEGIS_API_AUDIENCE: $(AEGIS_API_AUDIENCE)
+          - task: PublishPipelineArtifact@1
+            condition: always()
+            inputs:
+              {
+                targetPath: '$(Build.ArtifactStagingDirectory)/reconciliation',
+                artifact: 'aegis-reconciliation-$(System.StageAttempt)',
+              }
+
+  - stage: Report
+    displayName: Final report
+    dependsOn: [Assess, Gate, Deploy, Verify, Reconcile]
+    condition: always()
+    jobs:
+      - job: report
+        steps:
+          - script: |
+              {
+                echo "# AEGIS run summary"
+                echo "- Environment: ${{ parameters.targetEnvironment }}"
+                echo "- Build: $(Build.BuildNumber) at commit $(Build.SourceVersion)"
+                echo "- Stage results are shown in the pipeline graph."
+                echo "- Evidence: artifacts aegis-evidence, aegis-verification, aegis-reconciliation; decisions and audit trail: AEGIS dashboard."
+              } > $(Build.ArtifactStagingDirectory)/summary.md
+              echo "##vso[task.uploadsummary]$(Build.ArtifactStagingDirectory)/summary.md"
+            displayName: Publish summary
