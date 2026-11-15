@@ -17,6 +17,13 @@ export const useAuth = (): AuthState => {
 };
 
 const MODE = import.meta.env.VITE_AUTH_MODE ?? 'entra';
+const SCOPE = import.meta.env.VITE_ENTRA_API_SCOPE ?? '';
+export const AUTH_MODE = MODE;
+/** The API application (client) id, derived from the scope api://<id>/access_as_user. Used for help links only. */
+export const API_APP_ID = SCOPE.replace(/^api:\/\//, '').split('/')[0] ?? '';
+export const API_AUDIENCE = API_APP_ID ? `api://${API_APP_ID}` : '';
+export const TENANT_ID = import.meta.env.VITE_ENTRA_TENANT_ID ?? '';
+
 // Dev sign-in only exists in builds made with VITE_AUTH_MODE=dev; production builds use Entra.
 const msal =
   MODE === 'entra' && import.meta.env.VITE_ENTRA_CLIENT_ID
@@ -29,6 +36,17 @@ const msal =
         cache: { cacheLocation: 'sessionStorage' },
       })
     : null;
+
+/** Clears a stuck sign-in (for example "interaction_in_progress") without touching anything else. */
+export function resetSignInState(): void {
+  try {
+    Object.keys(sessionStorage)
+      .filter((k) => k.startsWith('msal.') || k.includes('interaction.status') || k === 'aegis-dev-token')
+      .forEach((k) => sessionStorage.removeItem(k));
+  } catch {
+    /* storage unavailable */
+  }
+}
 
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [me, setMe] = useState<Me | null>(null);
@@ -56,6 +74,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         }
       } else if (msal) {
         await msal.initialize();
+        // the redirect flow returns here with the sign-in result in the address
         const redirected = await msal.handleRedirectPromise();
         if (redirected?.account) msal.setActiveAccount(redirected.account);
         const acct = msal.getActiveAccount() ?? msal.getAllAccounts()[0];
@@ -73,7 +92,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const entraToken = async (): Promise<string> => {
-    const scopes = [import.meta.env.VITE_ENTRA_API_SCOPE ?? ''];
+    const scopes = [SCOPE];
     const r = await msal!
       .acquireTokenSilent({ scopes, account: msal!.getActiveAccount() ?? undefined })
       .catch(async () => {
@@ -93,12 +112,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           const t = `Bearer dev:${identity}:${roles ?? 'viewer'}`;
           sessionStorage.setItem('aegis-dev-token', t);
           setTokenProvider(async () => t);
+          await load();
         } else if (msal) {
           await msal.initialize();
-          await msal.loginRedirect({ scopes: [import.meta.env.VITE_ENTRA_API_SCOPE ?? ''] });
-          return;
+          await msal.loginRedirect({ scopes: [SCOPE] });
         }
-        await load();
       },
       signOut: () => {
         sessionStorage.removeItem('aegis-dev-token');
@@ -112,4 +130,3 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
 }
-export const AUTH_MODE = MODE;

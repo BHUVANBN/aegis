@@ -26,6 +26,7 @@ import { authorizeDeployment, evaluateGate } from './gate.js';
 import { verifyDeployment } from './verification.js';
 import { reconcileEnvironment } from './reconcile.js';
 import { learningSummary } from './agents/learning.js';
+import { registerInsights } from './insights.js';
 import type { ResourceGraphClient } from './azure/resourceGraph.js';
 import type { LlmProvider } from './llm/provider.js';
 
@@ -671,6 +672,8 @@ export function createApp(deps: AppDeps): AegisApp {
       res.status(204).end();
     }),
   );
+
+  registerInsights(api, { db, cfg, arg: deps.arg, llm: deps.llm });
 
   app.use('/api', api);
   app.use((_req, _res, next) => next(new AppError(404, 'not_found', 'Route not found')));

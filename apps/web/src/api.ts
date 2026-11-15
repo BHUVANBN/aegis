@@ -88,8 +88,116 @@ export interface GateView {
 export interface Me {
   oid: string;
   name?: string;
+  email?: string;
   tokenRoles: string[];
   grants: { environment: string; kind: string; role: string }[];
+}
+
+
+export interface MetricsSummary {
+  generatedAt: string;
+  days: number;
+  includeSamples: boolean;
+  sampleCount: number;
+  totals: { assessments: number; completed: number; failed: number; allow: number; requireApproval: number; block: number };
+  byRisk: { level: string; count: number }[];
+  byLevelDecision: { level: string; decision: string; count: number }[];
+  daily: { day: string; allow: number; requireApproval: number; block: number }[];
+  durations: {
+    assessmentMedianSec: number | null;
+    assessmentP90Sec: number | null;
+    approvalMedianSec: number | null;
+    approvalP90Sec: number | null;
+    leadTimeMedianSec: number | null;
+  };
+  approvals: {
+    total: number;
+    pending: number;
+    approved: number;
+    rejected: number;
+    expired: number;
+    revoked: number;
+    consumed: number;
+    oldestPendingSec: number | null;
+  };
+  deployments: { total: number; succeeded: number; failed: number; authorized: number; expired: number };
+  verifications: { total: number; passed: number; failed: number; inconclusive: number; partial: number };
+  topRules: { ruleId: string; title: string; severity: string; count: number; prohibited: boolean }[];
+  byEnvironment: {
+    project: string;
+    environment: string;
+    kind: string;
+    assessments: number;
+    blocked: number;
+    needsApproval: number;
+    deployments: number;
+    deploymentsSucceeded: number;
+  }[];
+  reconciliation: { runs: number; findings: number; lastRunAt: string | null };
+}
+export interface SystemStatus {
+  time: string;
+  db: { ok: boolean; latencyMs: number };
+  authMode: string;
+  llm: string;
+  resourceGraph: boolean;
+  rulesVersion: string | null;
+  uptimeSec: number;
+  audit: { ok: boolean; checked: number; brokenAtId?: number };
+  stuckAssessments: { id: string; environment: string; status: string; ageSec: number }[];
+  failedAssessments24h: number;
+  agentStats: { agent: string; runs: number; failures: number; medianMs: number | null }[];
+  pendingApprovals: { count: number; oldestSec: number | null };
+  expiredDeployments: number;
+  recentActivity: { id: number; at: string; actor: string; action: string; environment: string | null }[] | null;
+  lastReconcile: { at: string; environment: string | null; status: string | null; findings: number } | null;
+}
+export interface AdminEnvironment {
+  id: string;
+  name: string;
+  kind: string;
+  subscription_id: string | null;
+  resource_group: string | null;
+  grants: number;
+}
+export interface AdminProject {
+  id: string;
+  key: string;
+  name: string;
+  repo_url: string | null;
+  created_at: string;
+  environments: AdminEnvironment[];
+}
+export interface Principal {
+  oid: string;
+  display_name: string | null;
+  email: string | null;
+  last_seen_at: string;
+}
+export interface Grant {
+  principal_oid: string;
+  display_name: string | null;
+  email: string | null;
+  role: string;
+  created_at: string;
+}
+export const API_BASE: string = BASE;
+export interface Ping {
+  ok: boolean;
+  status: number;
+  ms: number;
+  body: Record<string, unknown> | null;
+}
+/** Public health probes (no sign-in needed). Never throws: a network failure is reported as ok=false. */
+export async function ping(path: '/healthz' | '/readyz'): Promise<Ping> {
+  const t0 = performance.now();
+  try {
+    const res = await fetch(`${BASE}${path}`);
+    const body = (await res.json().catch(() => null)) as Record<string, unknown> | null;
+    return { ok: res.ok, status: res.status, ms: Math.round(performance.now() - t0), body };
+  } catch {
+    return { ok: false, status: 0, ms: Math.round(performance.now() - t0), body: null };
+  }
 }
 
 export const api = {
@@ -161,4 +269,32 @@ export const api = {
   audit: (limit: number, offset: number) =>
     call<Paged<Item>>('GET', `/audit?limit=${limit}&offset=${offset}`),
   auditVerify: () => call<{ ok: boolean; checked: number; brokenAtId?: number }>('GET', '/audit/verify'),
+  metrics: (days: number, includeSamples: boolean) =>
+    call<MetricsSummary>('GET', `/metrics/summary?days=${days}&includeSamples=${includeSamples}`),
+  system: () => call<SystemStatus>('GET', '/system/status'),
+  adminProjects: () => call<{ items: AdminProject[] }>('GET', '/admin/projects'),
+  createProject: (b: { key: string; name: string; repoUrl?: string }) =>
+    call<{ id: string }>('POST', '/admin/projects', b),
+  createEnvironment: (b: {
+    projectKey: string;
+    name: string;
+    kind: 'dev' | 'staging' | 'prod';
+    subscriptionId?: string;
+    resourceGroup?: string;
+  }) => call<{ id: string }>('POST', '/admin/environments', b),
+  principals: () => call<{ items: Principal[] }>('GET', '/admin/principals'),
+  envAccess: (envId: string) => call<{ items: Grant[] }>('GET', `/admin/environments/${envId}/access`),
+  grantAccess: (envId: string, principalId: string, role: string) =>
+    call<void>('POST', `/admin/environments/${envId}/access`, { principalId, role }),
+  revokeAccess: (envId: string, principalId: string, role: string) =>
+    call<void>('POST', `/admin/environments/${envId}/access/revoke`, { principalId, role }),
+  createAssessment: (b: {
+    projectKey: string;
+    environment: string;
+    commitSha: string;
+    pipelineRunId: string;
+    artifactDigest: string;
+    templatePath: string;
+    whatIf: unknown;
+  }) => call<{ id: string; status: string; duplicate: boolean }>('POST', '/assessments', b),
 };

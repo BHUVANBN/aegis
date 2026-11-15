@@ -1,361 +1,196 @@
-import { useState, useEffect, useRef } from 'react';
-import { BrowserRouter, NavLink, Navigate, Route, Routes, useLocation } from 'react-router-dom';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
+import { BrowserRouter, Navigate, NavLink, Route, Routes, useLocation } from 'react-router-dom';
 import { AuthProvider, useAuth } from './auth';
-import { api } from './api';
-import Login from './pages/Login';
-import Dashboard from './pages/Dashboard';
-import Assessments from './pages/Assessments';
-import AssessmentDetail from './pages/AssessmentDetail';
+import { Loading, Notice } from './components/ui';
 import Approvals from './pages/Approvals';
+import AssessmentDetail from './pages/AssessmentDetail';
+import Assessments from './pages/Assessments';
 import Audit from './pages/Audit';
+import Guide from './pages/Guide';
 import Learning from './pages/Learning';
+import Login from './pages/Login';
+import Operations from './pages/Operations';
+import Overview from './pages/Overview';
 import Reconcile from './pages/Reconcile';
-import { Loading } from './components/ui';
+import Settings from './pages/Settings';
+import Setup from './pages/Setup';
 
-// ─── design tokens (inline so shell is self-contained) ───────────────────────
-const MS_BLUE = '#0078d4';
-const MS_BLUE_LIGHT = '#deecf9';
-const SIDEBAR_WIDTH = 220;
-
-function usePendingCount(): number {
-  const [count, setCount] = useState(0);
-  const mounted = useRef(true);
-  useEffect(() => {
-    mounted.current = true;
-    api.approvals('pending').then((res) => {
-      if (mounted.current) {
-        setCount(res.items.length);
-      }
-    }).catch(() => { /* ignore */ });
-    return () => { mounted.current = false; };
-  }, []);
-  return count;
-}
-
-// ─── Sidebar nav item ─────────────────────────────────────────────────────────
-interface NavItemProps {
-  to: string;
-  icon: string;
-  label: string;
-  badge?: number;
-}
-
-function NavItem({ to, icon, label, badge }: NavItemProps) {
-  const location = useLocation();
-  const isActive = location.pathname === to || (to !== '/' && location.pathname.startsWith(to));
-
-  const baseStyle: React.CSSProperties = {
-    display: 'flex',
-    alignItems: 'center',
-    gap: 10,
-    padding: '0 12px',
-    height: 40,
-    borderRadius: 4,
-    textDecoration: 'none',
-    fontSize: 14,
-    fontWeight: 400,
-    color: isActive ? MS_BLUE : '#201f1e',
-    background: isActive ? MS_BLUE_LIGHT : 'transparent',
-    borderLeft: isActive ? `3px solid ${MS_BLUE}` : '3px solid transparent',
-    transition: 'background 0.1s, color 0.1s',
-    cursor: 'pointer',
-    userSelect: 'none',
-    position: 'relative',
-  };
-
+function Guard({ roles, children }: { roles: string[]; children: ReactNode }) {
+  const { me } = useAuth();
+  if (me && roles.some((r) => me.tokenRoles.includes(r))) return <>{children}</>;
   return (
-    <NavLink
-      to={to}
-      style={baseStyle}
-      onMouseEnter={(e) => {
-        if (!isActive) {
-          (e.currentTarget as HTMLElement).style.background = '#f3f2f1';
-        }
-      }}
-      onMouseLeave={(e) => {
-        if (!isActive) {
-          (e.currentTarget as HTMLElement).style.background = 'transparent';
-        }
-      }}
-    >
-      <span style={{ fontSize: 16, lineHeight: 1, flexShrink: 0 }}>{icon}</span>
-      <span style={{ flex: 1, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-        {label}
-      </span>
-      {badge != null && badge > 0 && (
-        <span
-          style={{
-            display: 'inline-flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            minWidth: 18,
-            height: 18,
-            borderRadius: 9,
-            background: '#c50f1f',
-            color: '#fff',
-            fontSize: 11,
-            fontWeight: 600,
-            padding: '0 4px',
-            flexShrink: 0,
-          }}
-        >
-          {badge > 99 ? '99+' : badge}
-        </span>
-      )}
-    </NavLink>
+    <>
+      <h1 id="page-title" tabIndex={-1}>
+        Not available to your role
+      </h1>
+      <Notice tone="info">This page needs one of these roles: {roles.join(', ')}. Ask an administrator if you need it.</Notice>
+    </>
   );
 }
 
-// ─── Shell (authenticated layout) ─────────────────────────────────────────────
+/** After a page change, move focus to the page heading so keyboard and screen-reader users start at the top. */
+function RouteFocus() {
+  const loc = useLocation();
+  const first = useRef(true);
+  useEffect(() => {
+    if (first.current) {
+      first.current = false;
+      return;
+    }
+    if (loc.hash) return;
+    const t = window.setTimeout(() => {
+      (document.getElementById('page-title') ?? document.getElementById('main'))?.focus();
+      window.scrollTo(0, 0);
+    }, 60);
+    return () => window.clearTimeout(t);
+  }, [loc.pathname]);
+  return null;
+}
+
 function Shell() {
-  const { me, ready, signOut } = useAuth();
-  const [sidebarOpen, setSidebarOpen] = useState(false);
-  const pendingCount = usePendingCount();
+  const { me, signOut } = useAuth();
+  const [open, setOpen] = useState(false);
+  const loc = useLocation();
+  useEffect(() => setOpen(false), [loc.pathname]);
+  const roles = me?.tokenRoles ?? [];
+  const has = (...r: string[]) => r.some((x) => roles.includes(x));
 
-  if (!ready) return <Loading label="Loading AEGIS…" />;
-  if (!me) return <Login />;
-
-  const isAdmin = me.tokenRoles.includes('admin');
-  const isApprover = me.tokenRoles.includes('approver');
-  const displayName = me.name ?? me.oid;
-  const roleBadge = isAdmin ? 'Admin' : isApprover ? 'Approver' : me.tokenRoles[0] ?? 'Viewer';
+  const groups: { title: string; links: { to: string; label: string; show: boolean }[] }[] = [
+    {
+      title: 'Insights',
+      links: [
+        { to: '/overview', label: 'Business value', show: true },
+        { to: '/operations', label: 'Operations', show: has('admin', 'approver') },
+      ],
+    },
+    {
+      title: 'Changes',
+      links: [
+        { to: '/assessments', label: 'Assessments', show: true },
+        { to: '/approvals', label: 'Approvals', show: true },
+      ],
+    },
+    {
+      title: 'Governance',
+      links: [
+        { to: '/reconcile', label: 'Drift checks', show: has('admin', 'approver') },
+        { to: '/audit', label: 'Audit trail', show: has('admin') },
+        { to: '/learning', label: 'Learning', show: has('admin', 'approver') },
+      ],
+    },
+    { title: 'Administer', links: [{ to: '/setup', label: 'Setup', show: has('admin') }] },
+    {
+      title: 'Help',
+      links: [
+        { to: '/guide', label: 'Guide', show: true },
+        { to: '/settings', label: 'Settings', show: true },
+      ],
+    },
+  ];
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', minHeight: '100vh', fontFamily: 'Segoe UI, system-ui, -apple-system, sans-serif' }}>
-      {/* Skip link */}
-      <a
-        href="#main"
-        style={{
-          position: 'absolute',
-          left: -9999,
-          top: 'auto',
-          width: 1,
-          height: 1,
-          overflow: 'hidden',
-        }}
-        onFocus={(e) => {
-          e.currentTarget.style.left = '8px';
-          e.currentTarget.style.top = '8px';
-          e.currentTarget.style.width = 'auto';
-          e.currentTarget.style.height = 'auto';
-          e.currentTarget.style.zIndex = '9999';
-          e.currentTarget.style.padding = '8px 16px';
-          e.currentTarget.style.background = '#fff';
-          e.currentTarget.style.border = `2px solid ${MS_BLUE}`;
-          e.currentTarget.style.borderRadius = '4px';
-          e.currentTarget.style.textDecoration = 'none';
-          e.currentTarget.style.color = MS_BLUE;
-        }}
-        onBlur={(e) => {
-          e.currentTarget.style.left = '-9999px';
-          e.currentTarget.style.width = '1px';
-          e.currentTarget.style.height = '1px';
-        }}
-      >
-        Skip to content
+    <div className="app">
+      <a href="#main" className="skip-link">
+        Skip to main content
       </a>
-
-      {/* ── Header ── */}
-      <header
-        style={{
-          position: 'fixed',
-          top: 0,
-          left: 0,
-          right: 0,
-          height: 48,
-          zIndex: 200,
-          background: MS_BLUE,
-          color: '#fff',
-          display: 'flex',
-          alignItems: 'center',
-          padding: '0 16px',
-          gap: 12,
-          boxShadow: '0 2px 4px rgba(0,0,0,0.2)',
-        }}
-      >
-        {/* Mobile hamburger */}
-        <button
-          aria-label={sidebarOpen ? 'Close navigation' : 'Open navigation'}
-          onClick={() => setSidebarOpen((v) => !v)}
-          style={{
-            display: 'none',
-            background: 'transparent',
-            border: 'none',
-            color: '#fff',
-            fontSize: 20,
-            cursor: 'pointer',
-            padding: '4px 8px',
-            borderRadius: 4,
-          }}
-          className="hamburger-btn"
-        >
-          ☰
+      <header className="topbar">
+        <button type="button" className="secondary menu-btn" aria-expanded={open} aria-controls="sidenav" onClick={() => setOpen(!open)}>
+          Menu
         </button>
-
-        {/* Logo + subtitle */}
-        <div style={{ display: 'flex', alignItems: 'baseline', gap: 8 }}>
-          <span style={{ fontWeight: 700, fontSize: 20, letterSpacing: '-0.3px' }}>AEGIS</span>
-          <span style={{ fontSize: 12, opacity: 0.85, fontWeight: 400 }}>Infrastructure Change Risk</span>
-        </div>
-
-        <div style={{ flex: 1 }} />
-
-        {/* User info */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-          <span style={{ fontSize: 13, opacity: 0.9 }}>{displayName}</span>
-          <span
-            style={{
-              fontSize: 11,
-              fontWeight: 600,
-              background: 'rgba(255,255,255,0.2)',
-              border: '1px solid rgba(255,255,255,0.4)',
-              borderRadius: 10,
-              padding: '2px 8px',
-              letterSpacing: '0.3px',
-              textTransform: 'uppercase',
-            }}
-          >
-            {roleBadge}
-          </span>
-          <button
-            onClick={signOut}
-            style={{
-              background: 'rgba(255,255,255,0.15)',
-              border: '1px solid rgba(255,255,255,0.4)',
-              borderRadius: 4,
-              color: '#fff',
-              fontSize: 13,
-              padding: '5px 12px',
-              cursor: 'pointer',
-              fontFamily: 'inherit',
-              transition: 'background 0.1s',
-            }}
-            onMouseEnter={(e) => ((e.currentTarget as HTMLElement).style.background = 'rgba(255,255,255,0.25)')}
-            onMouseLeave={(e) => ((e.currentTarget as HTMLElement).style.background = 'rgba(255,255,255,0.15)')}
-          >
-            Sign out
-          </button>
-        </div>
+        <span className="brand">AEGIS</span>
+        <span className="tagline">Infrastructure change risk</span>
+        <span className="spacer" />
+        <span className="who">
+          <span className="who-name">{me?.name ?? me?.oid.slice(0, 8)}</span>
+          <span className="who-roles">{roles.join(', ') || 'no roles'}</span>
+        </span>
+        <button type="button" className="secondary" onClick={signOut}>
+          Sign out
+        </button>
       </header>
-
-      {/* ── Body (sidebar + content) ── */}
-      <div style={{ display: 'flex', flex: 1, paddingTop: 48 }}>
-
-        {/* Mobile overlay */}
-        {sidebarOpen && (
-          <div
-            onClick={() => setSidebarOpen(false)}
-            style={{
-              position: 'fixed',
-              inset: 0,
-              zIndex: 99,
-              background: 'rgba(0,0,0,0.3)',
-              display: 'none',
-            }}
-            className="sidebar-overlay"
+      <nav id="sidenav" className={`sidenav${open ? ' open' : ''}`} aria-label="Main">
+        {groups.map((g) => {
+          const links = g.links.filter((l) => l.show);
+          if (links.length === 0) return null;
+          return (
+            <div key={g.title} className="nav-group">
+              <p className="nav-title">{g.title}</p>
+              <ul>
+                {links.map((l) => (
+                  <li key={l.to}>
+                    <NavLink to={l.to}>{l.label}</NavLink>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          );
+        })}
+      </nav>
+      <main id="main" tabIndex={-1}>
+        <RouteFocus />
+        <Routes>
+          <Route path="/" element={<Navigate to="/overview" replace />} />
+          <Route path="/overview" element={<Overview />} />
+          <Route path="/operations" element={<Guard roles={['admin', 'approver']}><Operations /></Guard>} />
+          <Route path="/assessments" element={<Assessments />} />
+          <Route path="/assessments/:id" element={<AssessmentDetail />} />
+          <Route path="/approvals" element={<Approvals />} />
+          <Route path="/reconcile" element={<Guard roles={['admin', 'approver']}><Reconcile /></Guard>} />
+          <Route path="/audit" element={<Guard roles={['admin']}><Audit /></Guard>} />
+          <Route path="/learning" element={<Guard roles={['admin', 'approver']}><Learning /></Guard>} />
+          <Route path="/setup" element={<Setup />} />
+          <Route path="/guide" element={<Guide />} />
+          <Route path="/settings" element={<Settings />} />
+          <Route
+            path="*"
+            element={
+              <>
+                <h1 id="page-title" tabIndex={-1}>
+                  Page not found
+                </h1>
+                <p>
+                  Try the <NavLink to="/overview">business value page</NavLink>.
+                </p>
+              </>
+            }
           />
-        )}
-
-        {/* ── Sidebar ── */}
-        <nav
-          aria-label="Primary navigation"
-          style={{
-            position: 'fixed',
-            top: 48,
-            left: 0,
-            bottom: 0,
-            width: SIDEBAR_WIDTH,
-            background: '#faf9f8',
-            borderRight: '1px solid #edebe9',
-            padding: '12px 8px',
-            display: 'flex',
-            flexDirection: 'column',
-            gap: 2,
-            zIndex: 100,
-            overflowY: 'auto',
-            transition: 'transform 0.2s',
-          }}
-        >
-          <NavItem to="/" icon="🏠" label="Dashboard" />
-          <NavItem to="/assessments" icon="📋" label="Assessments" />
-          <NavItem to="/approvals" icon="✅" label="Approvals" badge={pendingCount} />
-          <NavItem to="/reconcile" icon="🔄" label="Drift & Reconcile" />
-          {isAdmin && <NavItem to="/audit" icon="🔒" label="Audit & Compliance" />}
-          {(isAdmin || isApprover) && <NavItem to="/learning" icon="📊" label="Learning Analytics" />}
-
-          <div style={{ flex: 1 }} />
-
-          {/* Version / footer area */}
-          <div
-            style={{
-              fontSize: 11,
-              color: '#a19f9d',
-              padding: '8px 12px',
-              borderTop: '1px solid #edebe9',
-              marginTop: 8,
-            }}
-          >
-            AEGIS v2.0
-          </div>
-        </nav>
-
-        {/* ── Main content ── */}
-        <main
-          id="main"
-          style={{
-            flex: 1,
-            marginLeft: SIDEBAR_WIDTH,
-            minHeight: '100%',
-            background: '#f3f2f1',
-            padding: '24px 28px',
-          }}
-        >
-          <div style={{ maxWidth: 1400, margin: '0 auto' }}>
-            <Routes>
-              <Route path="/" element={<Dashboard />} />
-              <Route path="/assessments" element={<Assessments />} />
-              <Route path="/assessments/:id" element={<AssessmentDetail />} />
-              <Route path="/approvals" element={<Approvals />} />
-              <Route path="/reconcile" element={<Reconcile />} />
-              <Route
-                path="/audit"
-                element={isAdmin ? <Audit /> : <Navigate to="/" replace />}
-              />
-              <Route
-                path="/learning"
-                element={
-                  isAdmin || isApprover ? <Learning /> : <Navigate to="/" replace />
-                }
-              />
-              <Route path="*" element={<Navigate to="/" replace />} />
-            </Routes>
-          </div>
-        </main>
-      </div>
-
-      {/* ── Responsive CSS ── */}
-      <style>{`
-        @media (max-width: 768px) {
-          .hamburger-btn { display: block !important; }
-          nav[aria-label="Primary navigation"] {
-            transform: ${sidebarOpen ? 'translateX(0)' : `translateX(-${SIDEBAR_WIDTH}px)`} !important;
-          }
-          main#main {
-            margin-left: 0 !important;
-          }
-          .sidebar-overlay { display: block !important; }
-        }
-      `}</style>
+        </Routes>
+      </main>
+      <footer className="footer">
+        Measured numbers come from the AEGIS database; estimates are labelled and use assumptions you control. AEGIS judges infrastructure changes
+        only.
+      </footer>
     </div>
   );
 }
 
-// ─── App root ─────────────────────────────────────────────────────────────────
+function Gate() {
+  const { me, ready } = useAuth();
+  if (!ready)
+    return (
+      <main id="main" className="center">
+        <Loading label="Starting AEGIS" />
+      </main>
+    );
+  if (!me)
+    return (
+      <div className="app app-login">
+        <a href="#main" className="skip-link">
+          Skip to main content
+        </a>
+        <main id="main" tabIndex={-1} className="center">
+          <Login />
+        </main>
+      </div>
+    );
+  return <Shell />;
+}
+
 export default function App() {
   return (
     <BrowserRouter>
       <AuthProvider>
-        <Shell />
+        <Gate />
       </AuthProvider>
     </BrowserRouter>
   );
